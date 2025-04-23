@@ -9,7 +9,25 @@
 
 #include <EEPROM.h>
 #define EEPROM_SIZE 32 // حجم الذاكرة المطلوبة (يمكن تعديله حسب الحاجة)
-//----------------- lib---------------
+//---------------struct Schedule---------------
+// Define a struct for schedule settings
+struct Schedule
+{
+  String time;      // Time in HH:MM format
+  int duration;     // Duration in seconds
+  String direction; // Direction ("east" or "west")
+};
+
+// Declare an array to hold 5 schedules
+Schedule schedules[5] = {
+    {"00:00", 0, "east"}, // Example: Move east at 08:00 for 300 seconds
+    {"00:00", 0, "west"}, // Example: Move west at 10:00 for 200 seconds
+    {"00:00", 0, "east"}, // Example: Move east at 12:00 for 150 seconds
+    {"00:00", 0, "west"}, // Example: Move west at 14:00 for 250 seconds
+    {"00:00", 0, "east"}  // Example: Move east at 16:00 for 300 seconds
+};
+
+// Now the schedules array is globally accessible
 
 // ----------------------- Configuration -----------------------
 bool autoMode = true;
@@ -17,7 +35,72 @@ int morningStartHour = 7;
 int nightReturnHour = 18;
 int stepInterval = 30;
 int motorStepTime = 30; // Variable now represents time in seconds
+//--------saveCustomSettingsToEEPROM-------------
+void saveCustomSettingsToEEPROM()
+{
+  int address = 10; // Start address for custom settings in EEPROM
+  for (int i = 0; i < 5; i++)
+  {
+    // Save time (HH:MM format)
+    for (int j = 0; j < schedules[i].time.length(); j++)
+    {
+      EEPROM.write(address++, schedules[i].time[j]);
+    }
+    EEPROM.write(address++, '\0'); // Null-terminate the string
 
+    // Save duration
+    EEPROM.write(address++, schedules[i].duration & 0xFF);        // Low byte
+    EEPROM.write(address++, (schedules[i].duration >> 8) & 0xFF); // High byte
+
+    // Save direction
+    for (int j = 0; j < schedules[i].direction.length(); j++)
+    {
+      EEPROM.write(address++, schedules[i].direction[j]);
+    }
+    EEPROM.write(address++, '\0'); // Null-terminate the string
+  }
+  EEPROM.commit();
+  Serial.println("✅ Custom settings saved to EEPROM");
+}
+//------loadCustomSettingsFromEEPROM()-----
+void loadCustomSettingsFromEEPROM()
+{
+  int address = 10; // Start address for custom settings in EEPROM
+  for (int i = 0; i < 5; i++)
+  {
+    // Load time (HH:MM format)
+    char timeBuffer[6];
+    int j = 0;
+    while (true)
+    {
+      char c = EEPROM.read(address++);
+      if (c == '\0' || j >= 5)
+        break;
+      timeBuffer[j++] = c;
+    }
+    timeBuffer[j] = '\0';
+    schedules[i].time = String(timeBuffer);
+
+    // Load duration
+    int lowByte = EEPROM.read(address++);
+    int highByte = EEPROM.read(address++);
+    schedules[i].duration = (highByte << 8) | lowByte;
+
+    // Load direction
+    char directionBuffer[10];
+    j = 0;
+    while (true)
+    {
+      char c = EEPROM.read(address++);
+      if (c == '\0' || j >= 9)
+        break;
+      directionBuffer[j++] = c;
+    }
+    directionBuffer[j] = '\0';
+    schedules[i].direction = String(directionBuffer);
+  }
+  Serial.println("✅ Custom settings loaded from EEPROM");
+}
 // ----------------------- EEPROM Functions -----------------------
 void saveSettingsToEEPROM()
 {
@@ -76,22 +159,6 @@ WebServer server(80);
 const char *adminPassword = "kb70503"; // Change this to your desired password
 bool isAuthenticated = false;
 
-// Define a struct for schedule settings
-struct Schedule
-{
-  int time;         // Time in hours (0-23)
-  int duration;     // Duration in seconds
-  String direction; // Direction ("east" or "west")
-};
-
-// Declare an array to hold 5 schedules
-Schedule schedules[5] = {
-    {0, 0, "east"}, // Example: Move east at 8:00 for 300 seconds
-    {0, 0, "west"}, // Example: Move west at 10:00 for 200 seconds
-    {0, 0, "east"}, // Example: Move east at 12:00 for 150 seconds
-    {0, 0, "west"}, // Example: Move west at 14:00 for 250 seconds
-    {0, 0, "east"}  // Example: Move east at 16:00 for 300 seconds
-};
 
 // ----------------------- WiFi Access Point Setup -----------------------
 void setupWiFi()
@@ -265,27 +332,27 @@ void handleRoot()
                                   "</div>";
 
   // Custom movement settings
-  html += "<div class='settings-box'>"
-          "<h2>إعدادات الحركة المخصصة</h2>";
+ html += "<div class='settings-box'>"
+        "<h2>إعدادات الحركة المخصصة</h2>";
   for (int i = 0; i < 5; i++)
   {
-    html += "<div class='schedule-row'>"
-            "<label>الصف " +
-            String(i + 1) + ":</label>"
-                            "<label>الوقت: <input type='number' name='time" +
-            String(i) + "' min='0' max='23' value='" + String(schedules[i].time) + "'></label>"
-                                                                                   "<label>المدة (ثانية): <input type='number' name='duration" +
-            String(i) + "' min='1' max='3000' value='" + String(schedules[i].duration) + "'></label>"
-                                                                                         "<label>الاتجاه: <select name='direction" +
-            String(i) + "'>"
-                        "<option value='east'" +
-            (schedules[i].direction == "east" ? " selected" : "") + ">شرق</option>"
-                                                                    "<option value='west'" +
-            (schedules[i].direction == "west" ? " selected" : "") + ">غرب</option>"
-                                                                    "</select></label>"
-                                                                    "</div>";
-  }
-  html += "</div>";
+   html += "<div class='schedule-row'>"
+          "<label>الصف " +
+          String(i + 1) + ":</label>"
+                          "<label>الوقت (HH:MM): <input type='time' name='time" +
+          String(i) + "' value='" + String(schedules[i].time) + "' required></label>"
+                      "<label>المدة (ثانية): <input type='number' name='duration" +
+          String(i) + "' min='1' max='3000' value='" + String(schedules[i].duration) + "' required></label>"
+                      "<label>الاتجاه: <select name='direction" +
+          String(i) + "'>"
+                      "<option value='east'" +
+          (schedules[i].direction == "east" ? " selected" : "") + ">شرق</option>"
+                                                                  "<option value='west'" +
+          (schedules[i].direction == "west" ? " selected" : "") + ">غرب</option>"
+                                                                  "</select></label>"
+                                                                  "</div>";
+}
+html += "</div>";
 
   // Save button
   html += "<button type='submit' class='btn'>حفظ الإعدادات</button>"
@@ -303,42 +370,41 @@ struct MovementSetting
 };
 
 MovementSetting movementSettings[5];
-
+//------------------handleCustomMovement()-------------
 void handleCustomMovement()
 {
   for (int i = 0; i < 5; i++)
   {
-    String paramKey = "parameter" + String(i);
     String timeKey = "time" + String(i);
     String durationKey = "duration" + String(i);
+    String directionKey = "direction" + String(i);
 
-    if (server.hasArg(paramKey) && server.hasArg(timeKey) && server.hasArg(durationKey))
+    if (server.hasArg(timeKey) && server.hasArg(durationKey) && server.hasArg(directionKey))
     {
-      movementSettings[i].parameter = server.arg(paramKey);
-      movementSettings[i].time = server.arg(timeKey);
-      movementSettings[i].duration = server.arg(durationKey).toInt();
+      schedules[i].time = server.arg(timeKey); // Time in HH:MM format
+      schedules[i].duration = server.arg(durationKey).toInt();
+      schedules[i].direction = server.arg(directionKey);
     }
   }
+
+  saveCustomSettingsToEEPROM(); // Save updated settings to EEPROM
 
   Serial.println("✅ Custom movement settings updated:");
   for (int i = 0; i < 5; i++)
   {
     Serial.print("Row ");
     Serial.print(i + 1);
-    Serial.print(": Parameter=");
-    Serial.print(movementSettings[i].parameter);
-    Serial.print(", Time=");
-    Serial.print(movementSettings[i].time);
+    Serial.print(": Time=");
+    Serial.print(schedules[i].time);
     Serial.print(", Duration=");
-    Serial.println(movementSettings[i].duration);
+    Serial.print(schedules[i].duration);
+    Serial.print(", Direction=");
+    Serial.println(schedules[i].direction);
   }
 
   server.sendHeader("Location", "/?success=1", true);
   server.send(302, "text/plain", "Redirecting...");
 }
-
-// ...existing code...
-
 //---------------- handleMove()--------------
 void handleMove()
 {
@@ -426,10 +492,11 @@ void setup()
 {
   Serial.begin(115200);
 
-  delay(5000); // Wait 5 second for power stabilization
+  delay(5000); // Wait 5 seconds for power stabilization
 
   EEPROM.begin(EEPROM_SIZE);
   loadSettingsFromEEPROM();
+  loadCustomSettingsFromEEPROM(); // Load custom settings from EEPROM
   validateOrResetSettings();
 
   pinMode(RELAY_EAST, OUTPUT);
@@ -450,16 +517,12 @@ void setup()
   server.on("/settings", HTTP_POST, handleSettings);
   server.on("/settime", HTTP_POST, handleSetTime);
   server.on("/unlock", HTTP_POST, handleUnlock);
-  // ...existing code...
   server.on("/customMovement", HTTP_POST, handleCustomMovement);
-  // ...existing code...
   server.begin();
 
   Serial.println("✅ Web server started");
 }
-//-----------------------------loop ----------
-
-// ...existing code...
+//------------------processCustomMovements()-------------
 void processCustomMovements()
 {
   RtcDateTime now = Rtc.GetDateTime();
@@ -468,12 +531,18 @@ void processCustomMovements()
 
   for (int i = 0; i < 5; i++)
   {
-    if (movementSettings[i].time == String(currentTime))
+    if (schedules[i].time == String(currentTime)) // Compare as String
     {
-      Serial.print("Executing movement for parameter: ");
-      Serial.println(movementSettings[i].parameter);
-      // Add logic to control movement based on parameter and duration
-      delay(movementSettings[i].duration * 1000);
+      Serial.print("Executing custom movement: ");
+      Serial.println(schedules[i].direction);
+
+      if (schedules[i].direction == "east")
+        moveEast();
+      else if (schedules[i].direction == "west")
+        moveWest();
+
+      delay(schedules[i].duration * 1000); // Duration in seconds
+      stopMotor();
     }
   }
 }
